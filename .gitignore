@@ -1,0 +1,19 @@
+# Binaries
+steam-box
+steam-box.exe
+cdk-bridge.exe
+*.dll
+*.exe
+
+# Data
+data/
+config.json
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/

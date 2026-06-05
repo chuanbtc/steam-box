@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Steam Box 管理台</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <style>
+        :root {
+            --pico-border-radius: 8px;
+            --card-bg: #1a1d23;
+            --card-border: #2a2d35;
+            --green: #4caf50;
+            --green-bg: rgba(76, 175, 80, 0.12);
+            --gray: #888;
+            --gray-bg: rgba(136, 136, 136, 0.1);
+            --accent: #6c8dfa;
+            --accent-hover: #8aa4fb;
+        }
+
+        body {
+            background: #0f1117;
+            min-height: 100vh;
+        }
+
+        /* ---------- Login ---------- */
+        #login-view {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+
+        #login-view .login-box {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 2.5rem 2rem;
+            width: 100%;
+            max-width: 380px;
+        }
+
+        #login-view h2 {
+            text-align: center;
+            margin-bottom: 1.5rem;
+            font-size: 1.4rem;
+        }
+
+        /* ---------- Admin Panel ---------- */
+        #admin-view {
+            display: none;
+        }
+
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 0;
+            border-bottom: 1px solid var(--card-border);
+            margin-bottom: 1.5rem;
+        }
+
+        .top-bar h1 {
+            font-size: 1.35rem;
+            margin: 0;
+        }
+
+        .top-bar button {
+            padding: 0.4rem 1rem;
+            font-size: 0.85rem;
+            width: auto;
+        }
+
+        /* ---------- Dashboard Cards ---------- */
+        .dash-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .dash-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 10px;
+            padding: 1.2rem 1rem;
+            text-align: center;
+        }
+
+        .dash-card .label {
+            font-size: 0.82rem;
+            color: var(--gray);
+            margin-bottom: 0.3rem;
+        }
+
+        .dash-card .value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        /* ---------- Sections ---------- */
+        .panel-section {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .panel-section h3 {
+            margin-top: 0;
+            font-size: 1.1rem;
+            border-bottom: 1px solid var(--card-border);
+            padding-bottom: 0.6rem;
+            margin-bottom: 1rem;
+        }
+
+        /* ---------- Generate Form ---------- */
+        .gen-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 0.8rem;
+            align-items: end;
+        }
+
+        .gen-form label {
+            margin-bottom: 0;
+            font-size: 0.82rem;
+        }
+
+        .gen-form input {
+            margin-bottom: 0;
+        }
+
+        .gen-form .btn-col {
+            display: flex;
+            align-items: end;
+        }
+
+        .gen-form .btn-col button {
+            width: 100%;
+            margin-bottom: 0;
+        }
+
+        /* ---------- Generated CDKs ---------- */
+        #generated-area {
+            display: none;
+            margin-top: 1rem;
+        }
+
+        #generated-area .cdk-list {
+            background: #12141a;
+            border: 1px solid var(--card-border);
+            border-radius: 6px;
+            padding: 0.8rem 1rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.88rem;
+            line-height: 1.8;
+            max-height: 260px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: var(--green);
+        }
+
+        .copy-all-btn {
+            margin-top: 0.6rem;
+            padding: 0.35rem 1rem;
+            font-size: 0.82rem;
+            width: auto;
+        }
+
+        /* ---------- Filter ---------- */
+        .filter-bar {
+            display: flex;
+            gap: 1.2rem;
+            margin-bottom: 1rem;
+            align-items: center;
+        }
+
+        .filter-bar label {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            cursor: pointer;
+            font-size: 0.88rem;
+            margin-bottom: 0;
+        }
+
+        .filter-bar input[type="radio"] {
+            margin: 0;
+        }
+
+        /* ---------- Table ---------- */
+        .tbl-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            font-size: 0.85rem;
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        table th {
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--gray);
+            white-space: nowrap;
+        }
+
+        table td, table th {
+            padding: 0.55rem 0.7rem;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        tr.used td {
+            color: var(--gray);
+            background: var(--gray-bg);
+        }
+
+        tr.unused td {
+            color: var(--green);
+            background: var(--green-bg);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .badge-used {
+            background: rgba(136, 136, 136, 0.25);
+            color: #aaa;
+        }
+
+        .badge-unused {
+            background: rgba(76, 175, 80, 0.2);
+            color: var(--green);
+        }
+
+        /* ---------- Quick Commands ---------- */
+        .cmd-block {
+            margin-bottom: 1rem;
+        }
+
+        .cmd-block .cmd-label {
+            font-size: 0.82rem;
+            color: var(--gray);
+            margin-bottom: 0.3rem;
+        }
+
+        .cmd-row {
+            display: flex;
+            gap: 0.5rem;
+            align-items: stretch;
+        }
+
+        .cmd-row code {
+            flex: 1;
+            display: block;
+            background: #12141a;
+            border: 1px solid var(--card-border);
+            border-radius: 6px;
+            padding: 0.6rem 0.8rem;
+            font-size: 0.82rem;
+            overflow-x: auto;
+            white-space: nowrap;
+            color: #e0e0e0;
+        }
+
+        .cmd-row button {
+            width: auto;
+            padding: 0.4rem 0.8rem;
+            font-size: 0.78rem;
+            white-space: nowrap;
+            margin-bottom: 0;
+        }
+
+        /* ---------- Misc ---------- */
+        .msg {
+            padding: 0.6rem 0.8rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            margin-bottom: 0.8rem;
+            display: none;
+        }
+
+        .msg-err {
+            background: rgba(244, 67, 54, 0.15);
+            color: #f44336;
+            border: 1px solid rgba(244, 67, 54, 0.3);
+        }
+
+        .msg-ok {
+            background: rgba(76, 175, 80, 0.15);
+            color: var(--green);
+            border: 1px solid rgba(76, 175, 80, 0.3);
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.2);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+            margin-right: 0.4rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .empty-msg {
+            text-align: center;
+            color: var(--gray);
+            padding: 2rem 0;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+
+<!-- ==================== LOGIN VIEW ==================== -->
+<div id="login-view">
+    <div class="login-box">
+        <h2>Steam Box 管理台</h2>
+        <div id="login-msg" class="msg msg-err"></div>
+        <form id="login-form" onsubmit="return handleLogin(event)">
+            <label for="username">用户名</label>
+            <input type="text" id="username" name="username" placeholder="admin" required autocomplete="username">
+            <label for="password">密码</label>
+            <input type="password" id="password" name="password" placeholder="密码" required autocomplete="current-password">
+            <button type="submit" id="login-btn">登 录</button>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== ADMIN VIEW ==================== -->
+<div id="admin-view">
+    <main class="container">
+
+        <!-- Top Bar -->
+        <div class="top-bar">
+            <h1>Steam Box 管理台</h1>
+            <button class="outline secondary" onclick="logout()">退出登录</button>
+        </div>
+
+        <!-- Dashboard -->
+        <div class="dash-row" id="dash-row">
+            <div class="dash-card">
+                <div class="label">CDK 总数</div>
+                <div class="value" id="d-total">-</div>
+            </div>
+            <div class="dash-card">
+                <div class="label">已使用</div>
+                <div class="value" id="d-used">-</div>
+            </div>
+            <div class="dash-card">
+                <div class="label">未使用</div>
+                <div class="value" id="d-unused">-</div>
+            </div>
+            <div class="dash-card">
+                <div class="label">用户数</div>
+                <div class="value" id="d-users">-</div>
+            </div>
+        </div>
+
+        <!-- CDK Generation -->
+        <div class="panel-section">
+            <h3>生成 CDK</h3>
+            <div id="gen-msg" class="msg"></div>
+            <div class="gen-form">
+                <div>
+                    <label for="gen-appid">AppID</label>
+                    <input type="text" id="gen-appid" placeholder="例: 730" oninput="debounceLookup()">
+                    <small id="lookup-status" style="color:var(--gray);margin-top:-8px;display:block;min-height:1.2em"></small>
+                </div>
+                <div>
+                    <label for="gen-game">游戏名称 <small style="color:var(--gray)">(输入AppID自动填充)</small></label>
+                    <input type="text" id="gen-game" placeholder="自动获取或手动填写">
+                    <img id="game-header" style="display:none;max-width:200px;border-radius:4px;margin-top:4px">
+                </div>
+                <div>
+                    <label for="gen-count">数量</label>
+                    <input type="number" id="gen-count" value="5" min="1" max="500">
+                </div>
+                <div>
+                    <label for="gen-note">备注</label>
+                    <input type="text" id="gen-note" placeholder="可选">
+                </div>
+                <div class="btn-col">
+                    <button id="gen-btn" onclick="generateCDK()">生成 CDK</button>
+                </div>
+            </div>
+            <div id="generated-area">
+                <div class="cdk-list" id="cdk-list"></div>
+                <button class="copy-all-btn outline" onclick="copyAllCDK()">复制全部</button>
+            </div>
+        </div>
+
+        <!-- CDK List -->
+        <div class="panel-section">
+            <h3>CDK 列表</h3>
+            <div class="filter-bar">
+                <label><input type="radio" name="cdk-filter" value="" checked onchange="loadCDKList()"> 全部</label>
+                <label><input type="radio" name="cdk-filter" value="unused" onchange="loadCDKList()"> 未使用</label>
+                <label><input type="radio" name="cdk-filter" value="used" onchange="loadCDKList()"> 已使用</label>
+            </div>
+            <div class="tbl-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>CDK 码</th>
+                            <th>AppID</th>
+                            <th>游戏</th>
+                            <th>状态</th>
+                            <th>机器码</th>
+                            <th>创建时间</th>
+                        </tr>
+                    </thead>
+                    <tbody id="cdk-tbody">
+                        <tr><td colspan="6" class="empty-msg">加载中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Quick Commands -->
+        <div class="panel-section">
+            <h3>快捷命令</h3>
+
+            <div class="cmd-block">
+                <div class="cmd-label">Hook 安装命令 (PowerShell)</div>
+                <div class="cmd-row">
+                    <code id="cmd-hook"></code>
+                    <button class="outline" onclick="copyCmd('cmd-hook')">复制</button>
+                </div>
+            </div>
+
+            <div class="cmd-block">
+                <div class="cmd-label">CDK 激活命令 (PowerShell)</div>
+                <div class="cmd-row">
+                    <code id="cmd-activate"></code>
+                    <button class="outline" onclick="copyCmd('cmd-activate')">复制</button>
+                </div>
+            </div>
+        </div>
+
+    </main>
+</div>
+
+<script>
+/* ============================
+   State & Helpers
+   ============================ */
+const API = window.location.origin;
+let token = localStorage.getItem('admin_token') || '';
+
+function authHeaders() {
+    return {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token
+    };
+}
+
+async function apiFetch(path, opts = {}) {
+    opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
+    const res = await fetch(API + path, opts);
+    if (res.status === 401) {
+        logout();
+        throw new Error('未授权，请重新登录');
+    }
+    return res;
+}
+
+function showMsg(elId, text, ok) {
+    const el = document.getElementById(elId);
+    el.textContent = text;
+    el.className = 'msg ' + (ok ? 'msg-ok' : 'msg-err');
+    el.style.display = 'block';
+    if (ok) setTimeout(() => { el.style.display = 'none'; }, 4000);
+}
+
+function hideMsg(elId) {
+    document.getElementById(elId).style.display = 'none';
+}
+
+function escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+function fmtTime(ts) {
+    if (!ts) return '-';
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return ts;
+    return d.toLocaleString('zh-CN', { hour12: false });
+}
+
+/* ============================
+   Login
+   ============================ */
+async function handleLogin(e) {
+    e.preventDefault();
+    hideMsg('login-msg');
+    const btn = document.getElementById('login-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>登录中...';
+
+    try {
+        const res = await fetch(API + '/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username: document.getElementById('username').value.trim(),
+                password: document.getElementById('password').value
+            })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || data.message || '登录失败');
+        token = data.token;
+        localStorage.setItem('admin_token', token);
+        showAdmin();
+    } catch (err) {
+        showMsg('login-msg', err.message, false);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '登 录';
+    }
+    return false;
+}
+
+function logout() {
+    token = '';
+    localStorage.removeItem('admin_token');
+    document.getElementById('admin-view').style.display = 'none';
+    document.getElementById('login-view').style.display = 'flex';
+}
+
+/* ============================
+   Admin Panel Init
+   ============================ */
+function showAdmin() {
+    document.getElementById('login-view').style.display = 'none';
+    document.getElementById('admin-view').style.display = 'block';
+    initCommands();
+    loadDashboard();
+    loadCDKList();
+}
+
+function initCommands() {
+    const host = window.location.origin;
+    document.getElementById('cmd-hook').textContent =
+        `irm ${host}/hook | iex`;
+    document.getElementById('cmd-activate').textContent =
+        `$cdk="PASTE-CDK-HERE"; irm ${host} | iex`;
+}
+
+/* ============================
+   Dashboard
+   ============================ */
+async function loadDashboard() {
+    try {
+        const res = await apiFetch('/api/admin/dashboard');
+        const d = await res.json();
+        document.getElementById('d-total').textContent  = d.total_cdks  ?? d.total  ?? '-';
+        document.getElementById('d-used').textContent   = d.used_cdks   ?? d.used   ?? '-';
+        document.getElementById('d-unused').textContent  = d.unused_cdks ?? d.unused ?? '-';
+        document.getElementById('d-users').textContent   = d.users       ?? d.user_count ?? '-';
+    } catch (e) {
+        console.error('Dashboard load failed:', e);
+    }
+}
+
+/* ============================
+   Game Lookup (auto-fill name)
+   ============================ */
+let lookupTimer = null;
+function debounceLookup() {
+    clearTimeout(lookupTimer);
+    lookupTimer = setTimeout(lookupGame, 600);
+}
+
+async function lookupGame() {
+    const appid = document.getElementById('gen-appid').value.trim();
+    const status = document.getElementById('lookup-status');
+    const img = document.getElementById('game-header');
+    if (!appid || appid.length < 2) {
+        status.textContent = '';
+        img.style.display = 'none';
+        return;
+    }
+    status.textContent = '🔍 查询中...';
+    status.style.color = 'var(--gray)';
+    try {
+        const res = await apiFetch('/api/admin/game/lookup?appid=' + encodeURIComponent(appid));
+        const data = await res.json();
+        if (data.ok && data.name) {
+            document.getElementById('gen-game').value = data.name;
+            const depotInfo = data.depot_count > 0 ? ` | ${data.depot_count} 个 depot key` : ' | 无 depot key';
+            status.textContent = '✅ ' + data.name + ' (' + (data.type || 'game') + ')' + depotInfo;
+            status.style.color = 'var(--green)';
+            if (data.header_url) {
+                img.src = data.header_url;
+                img.style.display = 'block';
+            } else {
+                img.style.display = 'none';
+            }
+        } else {
+            status.textContent = '❌ ' + (data.message || '未找到');
+            status.style.color = '#e57373';
+            img.style.display = 'none';
+        }
+    } catch (e) {
+        status.textContent = '⚠️ 查询失败';
+        status.style.color = '#e57373';
+    }
+}
+
+/* ============================
+   CDK Generation
+   ============================ */
+let lastGenerated = [];
+
+async function generateCDK() {
+    hideMsg('gen-msg');
+    const appid = document.getElementById('gen-appid').value.trim();
+    const game  = document.getElementById('gen-game').value.trim();
+    const count = parseInt(document.getElementById('gen-count').value) || 5;
+    const note  = document.getElementById('gen-note').value.trim();
+
+    if (!appid) { showMsg('gen-msg', '请输入 AppID', false); return; }
+    // game_name is now optional — server auto-lookups if empty
+
+    const btn = document.getElementById('gen-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>生成中...';
+
+    try {
+        const res = await apiFetch('/api/admin/cdk/generate', {
+            method: 'POST',
+            body: JSON.stringify({ appid: appid, game_name: game, count, note })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || data.message || '生成失败');
+
+        const codes = data.cdks || data.codes || data.list || [];
+        lastGenerated = codes;
+
+        const area = document.getElementById('generated-area');
+        const list = document.getElementById('cdk-list');
+        list.textContent = codes.join('\n');
+        area.style.display = 'block';
+
+        showMsg('gen-msg', `成功生成 ${codes.length} 个 CDK`, true);
+        loadDashboard();
+        loadCDKList();
+    } catch (err) {
+        showMsg('gen-msg', err.message, false);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '生成 CDK';
+    }
+}
+
+function copyAllCDK() {
+    if (!lastGenerated.length) return;
+    navigator.clipboard.writeText(lastGenerated.join('\n')).then(() => {
+        const btn = document.querySelector('.copy-all-btn');
+        btn.textContent = '已复制!';
+        setTimeout(() => { btn.textContent = '复制全部'; }, 2000);
+    });
+}
+
+/* ============================
+   CDK List
+   ============================ */
+async function loadCDKList() {
+    const filter = document.querySelector('input[name="cdk-filter"]:checked').value;
+    const tbody = document.getElementById('cdk-tbody');
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">加载中...</td></tr>';
+
+    try {
+        let url = '/api/admin/cdk/list?limit=100';
+        if (filter) url += '&filter=' + filter;
+
+        const res = await apiFetch(url);
+        const data = await res.json();
+        const list = data.items || data.cdks || data.list || data.data || [];
+
+        if (!list.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">暂无数据</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = list.map(c => {
+            const used = !!(c.Used || c.used || c.is_used);
+            const cls = used ? 'used' : 'unused';
+            const badge = used
+                ? '<span class="badge badge-used">已使用</span>'
+                : '<span class="badge badge-unused">未使用</span>';
+            return `<tr class="${cls}">
+                <td><code>${escHtml(c.Code || c.code || c.cdk || '')}</code></td>
+                <td>${escHtml(c.AppID || c.app_id || c.appid || '')}</td>
+                <td>${escHtml(c.GameName || c.game_name || '')}</td>
+                <td>${badge}</td>
+                <td>${escHtml(c.UsedMachine || c.machine_code || '-')}</td>
+                <td>${fmtTime(c.CreatedAt || c.created_at || '')}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="6" class="empty-msg">加载失败: ${escHtml(e.message)}</td></tr>`;
+    }
+}
+
+/* ============================
+   Copy Command
+   ============================ */
+function copyCmd(elId) {
+    const text = document.getElementById(elId).textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = document.getElementById(elId).nextElementSibling;
+        btn.textContent = '已复制!';
+        setTimeout(() => { btn.textContent = '复制'; }, 2000);
+    });
+}
+
+/* ============================
+   Boot
+   ============================ */
+(function init() {
+    if (token) {
+        // Verify token is still valid
+        apiFetch('/api/admin/dashboard')
+            .then(res => {
+                if (res.ok) showAdmin();
+                else logout();
+            })
+            .catch(() => logout());
+    }
+})();
+</script>
+</body>
+</html>

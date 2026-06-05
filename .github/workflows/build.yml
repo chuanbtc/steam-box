@@ -1,0 +1,157 @@
+name: Build All
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  # ── Job 1: Build Go server for all platforms ──────────────────
+  go-server:
+    name: Go Server (${{ matrix.goos }}-${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: ""
+          - goos: windows
+            goarch: amd64
+            suffix: ".exe"
+          - goos: darwin
+            goarch: arm64
+            suffix: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build server
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build -ldflags="-s -w" -o steam-box${{ matrix.suffix }} ./cmd/server/
+
+      - name: Build bridge (Windows only)
+        if: matrix.goos == 'windows'
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: go build -ldflags="-H windowsgui -s -w" -o cdk-bridge.exe ./cmd/bridge/
+
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: steam-box-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            steam-box${{ matrix.suffix }}
+            cdk-bridge.exe
+            scripts/
+            static/admin.html
+            config.json
+          retention-days: 30
+
+  # ── Job 2: Build OpenSteamTool DLLs with CDK patch ───────────
+  opensteamtool-dll:
+    name: OpenSteamTool DLL (CDK Fork)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone OpenSteamTool upstream
+        run: git clone --depth 1 https://github.com/OpenSteam001/OpenSteamTool.git ost-upstream
+
+      - name: Apply CDK patch
+        shell: pwsh
+        run: |
+          # Copy our new CDK hook files
+          Copy-Item "ost-patch/Hooks_CDKRedeem.h"   "ost-upstream/src/Hook/" -Force
+          Copy-Item "ost-patch/Hooks_CDKRedeem.cpp"  "ost-upstream/src/Hook/" -Force
+
+          # Patch CMakeLists.txt
+          $cmake = Get-Content "ost-upstream/src/CMakeLists.txt" -Raw
+          $cmake = $cmake -replace "(Hook/Hooks_NetPacket\.cpp)", "Hook/Hooks_NetPacket.cpp`n    Hook/Hooks_CDKRedeem.cpp"
+          $cmake = $cmake -replace "(winhttp\s*\r?\n\s*Bcrypt)", "winhttp`n    Bcrypt`n    Shell32"
+          Set-Content "ost-upstream/src/CMakeLists.txt" -Value $cmake
+
+          # Patch Hooks_NetPacket.cpp
+          $np = Get-Content "ost-upstream/src/Hook/Hooks_NetPacket.cpp" -Raw
+          # Add include
+          $np = $np -replace '(#include "Hooks_NetPacket\.h")', "`$1`n#include `"Hooks_CDKRedeem.h`""
+          # Add case in SendJob switch — insert before 'default:'
+          $cdkCase = @"
+
+        case k_EMsgClientRegisterKey: {              // 743
+            bool blocked = Hooks_CDKRedeem::HandleSend(pBody, cbBody);
+            if (blocked) {
+                g_NeedReplaceSend = true;
+                g_cbSendNewBody = 0;
+            }
+            return;
+        }
+
+"@
+          # Find the 'default:' inside SendJob and insert before it
+          $np = $np -replace '(\s+default:\s*\r?\n\s*return;\s*\r?\n\s*\}\s*\r?\n\s*\}\s*\r?\n\s*void RecvJob)', "$cdkCase        default:`n            return;`n        }`n    }`n`n    void RecvJob"
+          Set-Content "ost-upstream/src/Hook/Hooks_NetPacket.cpp" -Value $np
+
+          Write-Host "Patch applied successfully"
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        working-directory: ost-upstream
+        run: cmake -S src -B build -G "Ninja Multi-Config"
+
+      - name: Build Release
+        working-directory: ost-upstream
+        run: cmake --build build --config Release
+
+      - name: Upload DLLs
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenSteamTool-CDK-DLLs
+          path: |
+            ost-upstream/build/Release/OpenSteamTool.dll
+            ost-upstream/build/Release/dwmapi.dll
+            ost-upstream/build/Release/xinput1_4.dll
+          retention-days: 30
+
+  # ── Job 3: Package everything together ───────────────────────
+  package:
+    name: Package Release
+    needs: [go-server, opensteamtool-dll]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Go server (Windows)
+        uses: actions/download-artifact@v4
+        with:
+          name: steam-box-windows-amd64
+          path: release/
+
+      - name: Download DLLs
+        uses: actions/download-artifact@v4
+        with:
+          name: OpenSteamTool-CDK-DLLs
+          path: release/static/inject/
+
+      - name: Copy static files
+        run: |
+          cp static/admin.html release/static/ 2>/dev/null || true
+          cp -r scripts/ release/scripts/ 2>/dev/null || true
+          mkdir -p release/data
+
+      - name: Upload complete package
+        uses: actions/upload-artifact@v4
+        with:
+          name: steam-box-complete-windows
+          path: release/
+          retention-days: 30
