@@ -63,4 +63,13 @@ if ($np -notmatch "Hooks_CDKRedeem") {
     Write-Host "[+] Patched Hooks_NetPacket.cpp"
 }
 
+# 5. Register CDK log module in ost_log_modules.h
+$modsFile = "$OstRoot/src/Utils/ost_log_modules.h"
+$modsContent = Get-Content $modsFile -Raw
+if ($modsContent -notmatch "CDK") {
+    $modsContent = $modsContent.TrimEnd() + "`nOST_MOD(CDK,            `"cdk`")`n"
+    Set-Content $modsFile -Value $modsContent -NoNewline
+    Write-Host "[+] Registered CDK log module"
+}
+
 Write-Host "[OK] All patches applied"
