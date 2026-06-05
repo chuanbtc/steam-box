@@ -174,24 +174,40 @@ namespace {
 } // anonymous namespace
 
 
+namespace {
+    // Debug log that works in BOTH Debug and Release builds
+    void CdkLog(const std::string& msg) {
+        char localAppData[MAX_PATH] = {};
+        SHGetFolderPathA(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, localAppData);
+        std::string logPath = std::string(localAppData) + "\\steam\\cdk_debug.log";
+        std::ofstream logFile(logPath, std::ios::app);
+        if (logFile.is_open()) {
+            SYSTEMTIME st;
+            GetLocalTime(&st);
+            logFile << std::format("[{:02d}:{:02d}:{:02d}] {}\n", st.wHour, st.wMinute, st.wSecond, msg);
+        }
+    }
+}
+
 namespace Hooks_CDKRedeem {
 
     bool HandleSend(const uint8_t* pBody, uint32_t cbBody) {
+        CdkLog(">>> HandleSend called, cbBody=" + std::to_string(cbBody));
         EnsureConfig();
 
         if (g_cdkServerUrl.empty()) {
-            LOG_CDK_DEBUG("No CDK server configured, passing through to Valve");
-            return false; // Don't block — let Valve handle it
+            CdkLog("No CDK server configured, passing through");
+            return false;
         }
 
         // Extract the CDK string from the protobuf message
         std::string cdk = ExtractCDKFromBody(pBody, cbBody);
         if (cdk.empty()) {
-            LOG_CDK_WARN("Failed to extract CDK from RegisterKey message");
+            CdkLog("Failed to extract CDK from body");
             return false;
         }
 
-        LOG_CDK_INFO("Intercepted CDK: {}", cdk);
+        CdkLog("Intercepted CDK: " + cdk);
 
         // Build machine identifier
         char computerName[MAX_COMPUTERNAME_LENGTH + 1] = {};

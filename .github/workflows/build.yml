@@ -71,13 +71,13 @@ jobs:
         working-directory: ost
         run: |
           cmake -S src -B build -G "Ninja Multi-Config"
-          cmake --build build --config Release
+          cmake --build build --config Debug
 
       - name: Upload DLLs
         uses: actions/upload-artifact@v4
         with:
           name: OpenSteamTool-CDK-DLLs
           path: |
-            ost/build/Release/OpenSteamTool.dll
-            ost/build/Release/dwmapi.dll
-            ost/build/Release/xinput1_4.dll
+            ost/build/Debug/OpenSteamTool.dll
+            ost/build/Debug/dwmapi.dll
+            ost/build/Debug/xinput1_4.dll

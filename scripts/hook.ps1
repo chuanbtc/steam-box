@@ -77,9 +77,9 @@ if ($hasOldSteamTools) {
     Write-Host "[!] 检测到旧版 SteamTools，将自动清理并重新安装" -ForegroundColor Yellow
 }
 
-# ── Already installed check (all 5 components must exist) ────────────────────
+# ── Force reinstall: always replace DLLs to ensure latest version ────────────
 $fullyInstalled = $false
-if (-not $hasOldSteamTools) {
+if ($false) {  # DISABLED — always reinstall to pick up new DLL builds
     if ((Test-Path $dllXinput) -and (Test-Path $dllDwmapi) -and (Test-Path $dllOST) -and (Test-Path $tomlPath) -and (Test-Path $bridgeExe)) {
         $sizeOK = ((Get-Item $dllXinput).Length -gt 50000) -and ((Get-Item $dllDwmapi).Length -gt 50000) -and ((Get-Item $dllOST).Length -gt 100000) -and ((Get-Item $bridgeExe).Length -gt 100000)
         if ($sizeOK) { $fullyInstalled = $true }
@@ -98,18 +98,37 @@ if ($fullyInstalled) {
 
 Write-Host "[*] 开始安装 OpenSteamTool..." -ForegroundColor Cyan
 
-# ── Kill Steam ───────────────────────────────────────────────────────────────
-$steamProcs = Get-Process -Name "steam" -ErrorAction SilentlyContinue
-if ($steamProcs) {
-    Write-Host "[*] 正在关闭 Steam..." -ForegroundColor Yellow
+# ── Kill Steam + all related processes ───────────────────────────────────────
+Write-Host "[*] 正在关闭 Steam..." -ForegroundColor Yellow
+foreach ($proc in @("steam", "steamwebhelper", "steamservice", "cdk-bridge")) {
+    Stop-Process -Name $proc -Force -ErrorAction SilentlyContinue
+}
+Start-Sleep -Seconds 3
+for ($i = 0; $i -lt 15; $i++) {
+    if (-not (Get-Process -Name "steam" -ErrorAction SilentlyContinue)) { break }
     Stop-Process -Name "steam" -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 3
-    for ($i = 0; $i -lt 10; $i++) {
-        if (-not (Get-Process -Name "steam" -ErrorAction SilentlyContinue)) { break }
-        Stop-Process -Name "steam" -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Milliseconds 500
+    Start-Sleep -Milliseconds 500
+}
+Write-Host "[+] Steam 已关闭" -ForegroundColor Green
+
+# ── Delete old DLLs (ensure clean install) ───────────────────────────────────
+Write-Host "[*] 清理旧文件..." -ForegroundColor Yellow
+foreach ($old in @($dllXinput, $dllDwmapi, $dllOST, $bridgeExe)) {
+    if (Test-Path $old) {
+        Remove-Item $old -Force -ErrorAction SilentlyContinue
+        if (Test-Path $old) {
+            Write-Host "[!] 无法删除 $(Split-Path $old -Leaf)，文件可能被占用" -ForegroundColor Red
+            Write-Host "    请确保 Steam 已完全关闭后重试" -ForegroundColor Yellow
+            Pause-Exit "安装中断：请手动关闭 Steam 后重试"
+            return
+        }
+        Write-Host "  已删除 $(Split-Path $old -Leaf)" -ForegroundColor Gray
     }
-    Write-Host "[+] Steam 已关闭" -ForegroundColor Green
+}
+# Also clean conflicting injectors
+foreach ($name in @("version.dll", "user32.dll", "steam.cfg", "hid.dll")) {
+    $f = Join-Path $SteamPath $name
+    if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
 }
 
 # ── Download helper ──────────────────────────────────────────────────────────
@@ -159,7 +178,8 @@ level = "info"
 
 [manifest]
 url = "opensteamtool"
-"@ | Set-Content -Path $tomlPath -Encoding UTF8 -Force
+"@
+[IO.File]::WriteAllText($tomlPath, $tomlContent, [System.Text.UTF8Encoding]::new($false))
 Write-Host "[+] 配置写入: opensteamtool.toml" -ForegroundColor Green
 
 # ── Clean up old SteamTools ──────────────────────────────────────────────────
@@ -178,45 +198,16 @@ if (Test-Path $stPluginDir) {
 # ── Write hook.json ──────────────────────────────────────────────────────────
 $hookDir = Join-Path $env:LOCALAPPDATA "steam"
 New-Item -ItemType Directory -Force -Path $hookDir -ErrorAction SilentlyContinue | Out-Null
-@{
+$hookObj = @{
     api       = $ApiBase
     steam     = ($SteamPath -replace '\\', '/')
     engine    = "opensteamtool"
     installed = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-} | ConvertTo-Json | Set-Content (Join-Path $hookDir "hook.json") -Encoding UTF8
-Write-Host "[+] 状态写入: hook.json" -ForegroundColor Green
-
-# ── Install CDK Bridge (激活器) ──────────────────────────────────────────────
-$bridgeExe = Join-Path $SteamPath "cdk-bridge.exe"
-$ok4 = Download-File "$ApiBase/static/inject/cdk-bridge.exe" $bridgeExe
-if ($ok4) {
-    Write-Host "[+] CDK 激活器已安装" -ForegroundColor Green
-
-    # Create desktop shortcut
-    try {
-        $desktop = [Environment]::GetFolderPath("Desktop")
-        $shortcut = Join-Path $desktop "Steam 激活游戏.lnk"
-        $ws = New-Object -ComObject WScript.Shell
-        $sc = $ws.CreateShortcut($shortcut)
-        $sc.TargetPath = $bridgeExe
-        $sc.WorkingDirectory = $SteamPath
-        $sc.Description = "输入CDK激活Steam游戏"
-        $sc.IconLocation = (Join-Path $SteamPath "steam.exe") + ",0"
-        $sc.Save()
-        Write-Host "[+] 桌面快捷方式: Steam 激活游戏" -ForegroundColor Green
-    } catch {
-        Write-Host "[!] 创建快捷方式失败（不影响使用）" -ForegroundColor Yellow
-    }
-
-    # Register startup (run with Steam)
-    try {
-        $regRun = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-        Set-ItemProperty -Path $regRun -Name "SteamCDKBridge" -Value "`"$bridgeExe`"" -ErrorAction SilentlyContinue
-        Write-Host "[+] 已设置开机自启（随 Steam 启动）" -ForegroundColor Green
-    } catch {}
-} else {
-    Write-Host "[!] CDK 激活器下载失败（可手动下载）" -ForegroundColor Yellow
 }
+$hookJsonStr = $hookObj | ConvertTo-Json
+$hookJsonPath = Join-Path $hookDir "hook.json"
+[IO.File]::WriteAllText($hookJsonPath, $hookJsonStr, [System.Text.UTF8Encoding]::new($false))
+Write-Host "[+] 状态写入: hook.json" -ForegroundColor Green
 
 # ── Start Steam ──────────────────────────────────────────────────────────────
 $steamExe = Join-Path $SteamPath "steam.exe"
@@ -225,20 +216,13 @@ if (Test-Path $steamExe) {
     Start-Process -FilePath $steamExe -ErrorAction SilentlyContinue
 }
 
-# Start CDK Bridge
-if (Test-Path $bridgeExe) {
-    Start-Process -FilePath $bridgeExe -WindowStyle Hidden -ErrorAction SilentlyContinue
-}
-
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
 Write-Host "  安装完成！" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  激活游戏方式：" -ForegroundColor White
-Write-Host "  1. 双击桌面「Steam 激活游戏」图标" -ForegroundColor Yellow
-Write-Host "  2. 输入 CDK 激活码" -ForegroundColor Yellow
-Write-Host "  3. 游戏自动入库并开始安装" -ForegroundColor Yellow
+Write-Host "  激活游戏：" -ForegroundColor White
+Write-Host "  Steam → 游戏 → 激活产品 → 输入CDK" -ForegroundColor Yellow
 Write-Host ""
 
 Pause-Exit "安装成功，按任意键关闭窗口" "Green"
