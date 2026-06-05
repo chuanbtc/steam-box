@@ -29,8 +29,6 @@
 
 namespace fs = std::filesystem;
 
-LOG_MODULE(CDK);
-
 namespace {
 
     // ── Read server URL from hook.json ─────────────────────────────
