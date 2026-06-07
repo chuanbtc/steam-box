@@ -45,6 +45,7 @@ func GenerateLua(g *GameLua) string {
 	}
 
 	// Per-depot addappid with depot decryption key
+	// Format: addappid(depotID, 0, "hexkey") — the second arg 0 is required by OST
 	hasDepotKeys := false
 	for _, d := range g.Depots {
 		if d.DepotKey != "" {
@@ -52,7 +53,7 @@ func GenerateLua(g *GameLua) string {
 				b.WriteString("\n-- Depot Keys\n")
 				hasDepotKeys = true
 			}
-			fmt.Fprintf(&b, "addappid(%s, \"%s\")\n", d.DepotID, d.DepotKey)
+			fmt.Fprintf(&b, "addappid(%s, 0, \"%s\")\n", d.DepotID, d.DepotKey)
 		}
 	}
 
