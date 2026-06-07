@@ -45,7 +45,7 @@ func NewServer(database *gorm.DB, cdkSvc *cdk.Service, cfg *config.Config) *Serv
 	r.GET("/", s.handleActivatePS1)
 	r.GET("/hook", s.handleHookPS1)
 	r.GET("/api/ping", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"ok": true, "service": "steam-box"})
+		c.JSON(http.StatusOK, gin.H{"ok": true, "service": "steam-box", "depot_keys": manifest.DepotKeysCount()})
 	})
 	r.POST("/api/redeem", s.handleRedeem)
 	r.POST("/api/login", s.handleLogin)
@@ -65,6 +65,7 @@ func NewServer(database *gorm.DB, cdkSvc *cdk.Service, cfg *config.Config) *Serv
 		admin.POST("/api/admin/cdk/generate", s.handleCDKGenerate)
 		admin.GET("/api/admin/cdk/list", s.handleCDKList)
 		admin.POST("/api/admin/cdk/revoke", s.handleCDKRevoke)
+		admin.POST("/api/admin/depot-keys/reload", s.handleDepotKeysReload)
 	}
 
 	return s
@@ -78,9 +79,6 @@ func (s *Server) Run() error {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// publicURL determines the external base URL for script injection. If the
-// config has an explicit PublicURL it takes priority; otherwise the URL is
-// derived from the incoming request's Host header.
 func publicURL(c *gin.Context, cfg *config.Config) string {
 	if cfg.PublicURL != "" {
 		return strings.TrimRight(cfg.PublicURL, "/")
@@ -92,9 +90,6 @@ func publicURL(c *gin.Context, cfg *config.Config) string {
 	return fmt.Sprintf("%s://%s", scheme, c.Request.Host)
 }
 
-// servePS1 reads a PowerShell script from scripts/<name>, replaces the
-// injection marker with the live public URL, and writes the result as
-// text/plain.
 func (s *Server) servePS1(c *gin.Context, filename string) {
 	path := fmt.Sprintf("scripts/%s", filename)
 	data, err := os.ReadFile(path)
@@ -105,6 +100,28 @@ func (s *Server) servePS1(c *gin.Context, filename string) {
 	base := publicURL(c, s.Config)
 	body := strings.ReplaceAll(string(data), "__INJECT_API_BASE__", base)
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(body))
+}
+
+// buildFullLua constructs the complete Lua payload for an AppID, including
+// all depot keys and DLC unlocks discovered from upstream sources.
+func buildFullLua(appID string) (string, string) {
+	gameName := fmt.Sprintf("AppID %s", appID)
+	if info, err := manifest.LookupGame(appID); err == nil {
+		gameName = info.Name
+	}
+
+	depots := manifest.FindDepotsForApp(appID)
+	dlcs := manifest.FindDLCsForApp(appID)
+
+	g := &lua.GameLua{AppID: appID, Name: gameName, DLCs: dlcs}
+	for _, d := range depots {
+		g.Depots = append(g.Depots, lua.DepotInfo{
+			DepotID:  d.DepotID,
+			DepotKey: d.Key,
+		})
+	}
+
+	return lua.GenerateLua(g), gameName
 }
 
 // ─── Public Handlers ─────────────────────────────────────────────────────────
@@ -136,34 +153,19 @@ func (s *Server) handleRedeem(c *gin.Context) {
 		return
 	}
 
-	// Build FULL lua with depot keys from ManifestHub (not a stub).
-	// This way the lua works offline — no server callback needed at runtime.
-	gameName := key.GameName
-	if gameName == "" {
-		if info, lookupErr := manifest.LookupGame(key.AppID); lookupErr == nil {
-			gameName = info.Name
-		} else {
-			gameName = fmt.Sprintf("AppID %s", key.AppID)
-		}
+	// Build FULL lua with depot keys + DLC unlocks
+	fullLua, gameName := buildFullLua(key.AppID)
+	if key.GameName != "" {
+		gameName = key.GameName
 	}
-
-	depots := manifest.FindDepotsForApp(key.AppID)
-	g := &lua.GameLua{AppID: key.AppID, Name: gameName}
-	for _, d := range depots {
-		g.Depots = append(g.Depots, lua.DepotInfo{
-			DepotID:  d.DepotID,
-			DepotKey: d.Key,
-		})
-	}
-	fullLua := lua.GenerateLua(g)
 	luaB64 := base64.StdEncoding.EncodeToString([]byte(fullLua))
 
 	c.JSON(http.StatusOK, gin.H{
-		"ok":       true,
-		"appid":    key.AppID,
-		"name":     gameName,
-		"lua_b64":  luaB64,
-		"message":  "激活成功",
+		"ok":      true,
+		"appid":   key.AppID,
+		"name":    gameName,
+		"lua_b64": luaB64,
+		"message": "激活成功",
 	})
 }
 
@@ -217,9 +219,6 @@ func (s *Server) handleLuaPayload(c *gin.Context) {
 		return
 	}
 
-	// The token encodes HMAC(appid|machine, secret). Because the stub doesn't
-	// send the machine separately, we verify by looking up the activation log
-	// for this appID and checking each recorded machine until one matches.
 	var logs []db.ActivationLog
 	s.DB.Where("app_id = ? AND ok = ?", appID, true).Find(&logs)
 
@@ -237,27 +236,12 @@ func (s *Server) handleLuaPayload(c *gin.Context) {
 		return
 	}
 
-	// Build real lua with depot keys from ManifestHub
-	depots := manifest.FindDepotsForApp(appID)
-	gameName := fmt.Sprintf("AppID %s", appID)
-	if info, err := manifest.LookupGame(appID); err == nil {
-		gameName = info.Name
-	}
-
-	g := &lua.GameLua{AppID: appID, Name: gameName}
-	for _, d := range depots {
-		g.Depots = append(g.Depots, lua.DepotInfo{
-			DepotID:  d.DepotID,
-			DepotKey: d.Key,
-		})
-	}
-	payload := lua.GenerateLua(g)
+	payload, _ := buildFullLua(appID)
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(payload))
 }
 
 // ─── Admin Handlers ──────────────────────────────────────────────────────────
 
-// GET /admin — serve the admin SPA page. No-cache so updates always load.
 func (s *Server) handleAdminPage(c *gin.Context) {
 	c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	c.Header("Pragma", "no-cache")
@@ -285,14 +269,39 @@ func (s *Server) handleGameLookup(c *gin.Context) {
 		depotList = append(depotList, gin.H{"depot_id": d.DepotID, "key": d.Key})
 	}
 
+	// Build DLC info with names
+	dlcList := make([]gin.H, 0, len(info.DLCs))
+	for _, dlcID := range info.DLCs {
+		dlcInfo := gin.H{"appid": dlcID, "name": fmt.Sprintf("DLC %s", dlcID)}
+		if dlcGame, err := manifest.LookupGame(dlcID); err == nil {
+			dlcInfo["name"] = dlcGame.Name
+		}
+		// Check if we have depot keys for this DLC
+		dlcIDInt, _ := strconv.Atoi(dlcID)
+		if dlcIDInt > 0 {
+			dlcDepotKey := manifest.GetDepotKey(fmt.Sprintf("%d", dlcIDInt+1))
+			if dlcDepotKey == "" {
+				dlcDepotKey = manifest.GetDepotKey(dlcID)
+			}
+			dlcInfo["has_key"] = dlcDepotKey != ""
+		}
+		dlcList = append(dlcList, dlcInfo)
+	}
+
+	// Preview the generated Lua
+	fullLua, _ := buildFullLua(appID)
+
 	c.JSON(http.StatusOK, gin.H{
-		"ok":         true,
-		"appid":      info.AppID,
-		"name":       info.Name,
-		"type":       info.Type,
-		"header_url": info.HeaderURL,
-		"depots":     depotList,
+		"ok":          true,
+		"appid":       info.AppID,
+		"name":        info.Name,
+		"type":        info.Type,
+		"header_url":  info.HeaderURL,
+		"depots":      depotList,
 		"depot_count": len(depotList),
+		"dlcs":        dlcList,
+		"dlc_count":   len(dlcList),
+		"lua_preview": fullLua,
 	})
 }
 
@@ -309,10 +318,11 @@ func (s *Server) handleDashboard(c *gin.Context) {
 	s.DB.Model(&db.User{}).Count(&totalUsers)
 
 	c.JSON(http.StatusOK, gin.H{
-		"total_cdks":  totalCDKs,
-		"used_cdks":   usedCDKs,
-		"unused_cdks": unusedCDKs,
-		"total_users": totalUsers,
+		"total_cdks":      totalCDKs,
+		"used_cdks":       usedCDKs,
+		"unused_cdks":     unusedCDKs,
+		"total_users":     totalUsers,
+		"depot_keys_loaded": manifest.DepotKeysCount(),
 	})
 }
 
@@ -329,7 +339,6 @@ func (s *Server) handleCDKGenerate(c *gin.Context) {
 		return
 	}
 
-	// Auto-lookup game name from Steam if not provided
 	gameName := strings.TrimSpace(req.GameName)
 	if gameName == "" {
 		if info, err := manifest.LookupGame(req.AppID); err == nil {
@@ -392,4 +401,16 @@ func (s *Server) handleCDKRevoke(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// POST /api/admin/depot-keys/reload — force re-fetch all depot key sources
+func (s *Server) handleDepotKeysReload(c *gin.Context) {
+	if err := manifest.ReloadDepotKeys(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"ok":    true,
+		"count": manifest.DepotKeysCount(),
+	})
 }
